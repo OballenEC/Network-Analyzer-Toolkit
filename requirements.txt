@@ -1,7 +1,23 @@
-streamlit>=1.40
-pandas>=2.0
+﻿# --- Interfaz ---
+streamlit>=1.67.0
+
+# --- Datos ---
+pandas>=3.1.1
+numpy>=2.5.5
+
+# --- Red / ICMP / Traceroute ---
+ipscout>=2.5.4
+
+# --- Topología ---
 pyvis>=0.3.2
-networkx>=3.2
-netmiko>=4.3
-pysnmp>=6.0
+networkx>=3.7
+
+# --- Packet Tracer ---
 pktlib>=0.2.2
+
+# --- NetDevOps ---
+netmiko>=4.0.0
+pysnmp>=6.0.0
+
+# --- Pruebas ---
+pytest>=9.2.0

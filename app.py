@@ -1,4 +1,4 @@
-import re
+﻿import re
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -15,16 +15,18 @@ from src.device_manager import get_device_info_ssh, get_snmp_metrics
 from src.monitor import save_to_history, load_history
 from config import DEMO_RESULTS, PING_ATTEMPTS, PING_TIMEOUT_MS
 
-st.set_page_config(page_title="NDT v2.0", page_icon="🌐", layout="wide")
+st.set_page_config(page_title="NDT — Kit de Diagnóstico de Red", page_icon="🌐", layout="wide")
 
 # ==========================================================
 # 1) MANUAL DE BIENVENIDA
 # ==========================================================
 if "manual_accepted" not in st.session_state:
     st.session_state.manual_accepted = False
+if "manual_dismissed" not in st.session_state:
+    st.session_state.manual_dismissed = False
 
 
-@st.dialog("📘 Manual rápido — Network Diagnostic Toolkit v2.0")
+@st.dialog("📘 Manual rápido — Kit de Diagnóstico de Red")
 def show_manual():
     st.markdown("""
     <style>
@@ -34,7 +36,19 @@ def show_manual():
         box-shadow: 0 0 25px rgba(0, 255, 65, 0.35) !important;
         font-family: 'Consolas', monospace !important;
     }
-    [data-testid="stDialog"] h2 { color: #00ff41 !important; letter-spacing: 2px; }
+    [data-testid="stDialog"] { z-index: 900000 !important; }
+    [data-testid="stDialog"] h2 {
+        color: #00ff41 !important;
+        letter-spacing: 2px;
+        animation: glitch-title 5s infinite;
+    }
+    @keyframes glitch-title {
+        0%, 88%, 100% { text-shadow: 0 0 8px #00ff41; transform: translate(0,0); }
+        88.5% { text-shadow: -3px 0 #00bfff, 3px 0 #ff0050; transform: translate(-2px, 1px); }
+        89%   { text-shadow: 3px 0 #00bfff, -3px 0 #ff0050; transform: translate(2px, -1px); }
+        89.5% { text-shadow: -1px 0 #00bfff, 1px 0 #ff0050; transform: translate(-1px, 0); }
+        90%   { text-shadow: 0 0 8px #00ff41; transform: translate(0,0); }
+    }
     [data-testid="stDialog"] p,
     [data-testid="stDialog"] li,
     [data-testid="stDialog"] strong { color: #c8ffc8 !important; font-family: 'Consolas', monospace !important; }
@@ -58,8 +72,8 @@ def show_manual():
 ### ¿Qué hace esta herramienta?
 - **Diagnóstico ICMP concurrente**: ping masivo a IPs, dominios o rangos CIDR.
 - **Escaneo de puertos TCP** y **resolución DNS**.
-- **Traceroute multiplataforma** y **topología interactiva** (PyVis).
-- **NetDevOps**: SSH (Netmiko) y SNMP (PySNMP) para leer routers/switches Cisco.
+- **Trazado de ruta multiplataforma** y **topología interactiva** (PyVis).
+- **NetDevOps**: SSH (Netmiko) y SNMP (PySNMP) para leer routers y switches Cisco.
 - **Exportación** a Cisco Packet Tracer (`.pkt`) y CSV.
 - **Historial de monitoreo** con evolución de latencias.
 
@@ -70,22 +84,48 @@ def show_manual():
 4. En **Historial**, observa la evolución de latencias.
 
 ### Sobre las credenciales NetDevOps
-- **SSH:** las mismas credenciales que usarías para entrar al router/switch por consola SSH.
-- **SNMP:** la *community string* (típicamente `public` para lectura). SNMPv1/v2 la envía en texto plano; úsala solo en laboratorio.
+- **SSH:** las mismas credenciales que usarías para entrar al router o switch por consola SSH.
+- **SNMP:** la *community string* (normalmente `public` para lectura). SNMPv1/v2 la envía en texto plano; úsala solo en laboratorio.
 
 > No ejecutes escaneos masivos sobre redes que no controles.
     """)
+
     if st.button("✅ Acepto y comienzo", use_container_width=True):
         st.session_state.manual_accepted = True
         st.rerun()
 
 
+# Si el manual no ha sido aceptado, lo mostramos y detenemos la ejecución
 if not st.session_state.manual_accepted:
     show_manual()
+
+    # Detectamos si el usuario cerró el diálogo con la X:
+    # si el diálogo no está abierto y no fue aceptado, asumimos que lo cerró.
+    # (Streamlit no expone un evento de "cerrado", así que usamos una marca
+    #  que se activa tras el primer render del diálogo).
+    if "manual_shown_once" not in st.session_state:
+        st.session_state.manual_shown_once = True
+    elif not st.session_state.manual_dismissed:
+        st.session_state.manual_dismissed = True
+
+    if st.session_state.manual_dismissed:
+        st.warning(
+            "⚠ **No se accedió al programa.**\n\n"
+            "Has cerrado el manual sin aceptarlo. Para usar el Kit de Diagnóstico de Red "
+            "debes leer y aceptar el manual de bienvenida.\n\n"
+            "Pulsa el botón de abajo para volver a abrirlo cuando quieras."
+        )
+        if st.button("📘 Volver a abrir el manual", use_container_width=False):
+            st.session_state.manual_dismissed = False
+            st.session_state.manual_shown_once = False
+            st.rerun()
+
     st.stop()
+# Overlay glitch solo tras aceptar el manual
+st.markdown('<div id="ndt-glitch-overlay"></div>', unsafe_allow_html=True)
 
 # ==========================================================
-# 2) MATRIX + GLASS + SCANLINES + GLITCH + TEAR ESPORÁDICO
+# 2) MATRIX + GLASS + SCANLINES + GLITCH + TEAR
 # ==========================================================
 st.markdown("""
 <style>
@@ -145,38 +185,37 @@ st.markdown("""
     to   { background-position: 0 100vh; }
 }
 
-/* -------- GLITCH ESPORÁDICO DE PANTALLA -------- */
-/* Overlay fijo que aparece muy brevemente cada cierto tiempo */
-[data-testid="stAppViewContainer"]::before {
-    content: '';
+/* -------- GLITCH ESPORÁDICO -------- */
+#ndt-glitch-overlay {
     position: fixed;
     inset: 0;
     pointer-events: none;
-    z-index: 2;
+    z-index: 999999;
     opacity: 0;
+    mix-blend-mode: screen;
     background:
         linear-gradient(90deg,
-            rgba(255, 0, 80, 0.06) 0%,
-            transparent 8%,
-            transparent 92%,
-            rgba(0, 191, 255, 0.06) 100%
+            rgba(255, 0, 80, 0.10) 0%,
+            transparent 6%,
+            transparent 94%,
+            rgba(0, 191, 255, 0.10) 100%
         ),
         repeating-linear-gradient(
             0deg,
-            rgba(255, 255, 255, 0.02) 0px,
-            rgba(255, 255, 255, 0.02) 1px,
+            rgba(255, 255, 255, 0.03) 0px,
+            rgba(255, 255, 255, 0.03) 1px,
             transparent 1px,
             transparent 3px
         );
-    animation: tear 14s infinite;
+    animation: tear 12s infinite;
 }
 @keyframes tear {
-    0%, 90%, 100% { opacity: 0; transform: translateX(0); filter: none; }
-    90.5% { opacity: 0.9; transform: translateX(-4px); filter: hue-rotate(20deg); }
-    91% { opacity: 0.7; transform: translateX(3px) skewX(1deg); }
-    91.5% { opacity: 0.85; transform: translateX(-2px); }
-    92% { opacity: 0.5; transform: translateX(1px) skewX(-1deg); }
-    92.5% { opacity: 0; transform: translateX(0); }
+    0%, 88%, 100% { opacity: 0; transform: translateX(0); filter: none; }
+    88.5% { opacity: 1; transform: translateX(-6px) skewX(1deg); filter: hue-rotate(40deg); }
+    89%   { opacity: 0.85; transform: translateX(5px) skewX(-1deg); }
+    89.5% { opacity: 0.95; transform: translateX(-3px); }
+    90%   { opacity: 0.6; transform: translateX(2px) skewX(1deg); }
+    90.5% { opacity: 0; transform: translateX(0); }
 }
 
 /* -------- HEADER glitch -------- */
@@ -277,12 +316,50 @@ h1,h2,h3,h4,h5,h6,p,label,span,.stMarkdown {
     margin-bottom: 10px;
     padding-bottom: 5px;
 }
+
+/* -------- HUD MÓDULOS -------- */
 .hud-module-item {
-    display: flex; align-items: center;
-    font-size: 0.85em; color: #8b949e;
-    margin-bottom: 6px;
+    display: flex;
+    align-items: flex-start;
+    margin-bottom: 10px;
     font-family: 'Consolas', monospace;
+    line-height: 1.2;
 }
+.hud-module-item .led-green,
+.hud-module-item .led-blue {
+    margin-top: 4px;
+    flex-shrink: 0;
+}
+.hud-module-text {
+    display: flex;
+    flex-direction: column;
+}
+.hud-module-name {
+    font-size: 0.85em;
+    color: #00ff41;
+    font-weight: bold;
+    letter-spacing: 0.5px;
+}
+.hud-module-desc {
+    font-size: 0.72em;
+    color: #8b949e;
+    margin-top: 2px;
+}
+
+/* -------- ICONO INFO ⓘ -------- */
+.hud-info-icon {
+    color: #00bfff;
+    font-size: 0.85em;
+    margin-left: 6px;
+    cursor: help;
+    text-shadow: 0 0 4px #00bfff;
+    transition: 0.2s;
+}
+.hud-info-icon:hover {
+    color: #ffffff;
+    text-shadow: 0 0 10px #00bfff, 0 0 20px #00bfff;
+}
+
 .led-green {
     width: 8px; height: 8px;
     background-color: #00ff41;
@@ -305,7 +382,7 @@ h1,h2,h3,h4,h5,h6,p,label,span,.stMarkdown {
     100% { opacity: 1; }
 }
 
-/* -------- FIX EXPANDER (flecha vs texto) -------- */
+/* -------- FIX EXPANDER -------- */
 [data-testid="stExpander"] details > summary {
     display: flex !important;
     align-items: center !important;
@@ -335,7 +412,7 @@ h1,h2,h3,h4,h5,h6,p,label,span,.stMarkdown {
 """, unsafe_allow_html=True)
 
 st.markdown(
-    '<div class="terminal-header">// NETWORK DIAGNOSTIC TOOLKIT v2.0 — CYBER DASHBOARD //</div>',
+    '<div class="terminal-header">// Kit de Diagnóstico de Red — PANEL CYBER //</div>',
     unsafe_allow_html=True,
 )
 
@@ -400,7 +477,8 @@ def lectura_puertos(results):
         return None
     lineas = ["**Lectura del escaneo de puertos:**"]
     for r in con_puertos:
-        lineas.append(f"- `{r.ip}` → {r.observaciones.split('Puertos:')[-1].strip()}")
+        puertos_txt = (r.observaciones or "").split("Puertos:")[-1].strip()
+        lineas.append(f"- `{r.ip}` → {puertos_txt}")
     lineas.append(
         "Un puerto abierto indica que hay un servicio escuchando. "
         "No implica vulnerabilidad por sí mismo, pero es el primer paso de un análisis de superficie de ataque."
@@ -412,7 +490,7 @@ def lectura_traceroute(saltos, target):
     if not saltos:
         return "No se obtuvieron saltos. El host puede ser inalcanzable o ICMP está bloqueado en la ruta."
     if isinstance(saltos[0], dict) and saltos[0].get("error"):
-        return f"**Error en traceroute:** {saltos[0]['error']}"
+        return f"**Error en el trazado de ruta:** {saltos[0]['error']}"
 
     validos = [s for s in saltos if s.get("ip")]
     if not validos:
@@ -431,7 +509,7 @@ def lectura_traceroute(saltos, target):
     ]
     if max_lat:
         lineas.append(
-            f"**Salto con mayor latencia:** hop {max_lat['hop']} (`{max_lat['ip']}`) "
+            f"**Salto con mayor latencia:** salto {max_lat['hop']} (`{max_lat['ip']}`) "
             f"con {max_lat['latencia_ms']} ms."
         )
     lineas.append(
@@ -449,7 +527,7 @@ def lectura_ssh(res):
             "o el dispositivo no es compatible con Netmiko."
         )
     return (
-        "**Lectura SSH:** `show version` revela modelo, versión de IOS y uptime; "
+        "**Lectura SSH:** `show version` revela modelo, versión de IOS y tiempo encendido; "
         "`LLDP neighbors` muestra los dispositivos vecinos descubiertos por LLDP. "
         "Juntos permiten reconstruir la topología lógica de capa 2 alrededor del equipo."
     )
@@ -479,48 +557,79 @@ def lectura_historial(history_data):
         lineas.append(f"- `{row['ip']}` → última latencia registrada: {row['latencia']} ms.")
     lineas.append(
         "Si la línea sube de forma sostenida, hay congestión o degradación del enlace. "
-        "Si hay picos aislados, puede ser pérdida momentánea o reruteo."
+        "Si hay picos aislados, puede ser pérdida momentánea o un cambio de ruta."
     )
     return "\n".join(lineas)
 
 
 # ==========================================================
-# 5) SIDEBAR HUD
+# 5) SIDEBAR HUD — MÓDULOS EN ESPAÑOL CON TOOLTIP ⓘ
 # ==========================================================
+MODULES = [
+    ("validators.py",           "Valida direcciones IP, rangos CIDR y resuelve nombres DNS.", "green"),
+    ("network_engine.py",       "Envía pings ICMP concurrentes y traza rutas con ipscout.",     "green"),
+    ("latency_analyzer.py",     "Clasifica la latencia en excelente, buena o lenta.",           "green"),
+    ("results_manager.py",      "Estructura los resultados y calcula el resumen global.",       "green"),
+    ("exporter.py",             "Exporta los resultados del diagnóstico a un archivo CSV.",      "green"),
+    ("port_scanner.py",         "Escanea puertos TCP abiertos de forma concurrente.",            "green"),
+    ("topology.py",             "Dibuja la topología interactiva de la red con PyVis.",         "green"),
+    ("packet_tracer_export.py", "Genera un laboratorio .pkt para Cisco Packet Tracer.",         "green"),
+    ("device_manager.py",       "Conexión SSH (Netmiko) y consultas SNMP (PySNMP).",            "blue"),
+    ("monitor.py",              "Guarda y carga el historial de latencias.",                    "blue"),
+]
+
 with st.sidebar:
-    st.markdown('<div class="hud-title">⚙ SYSTEM CONFIG</div>', unsafe_allow_html=True)
-    mode = st.radio("Modo de ejecución", ["🔴 Real (ICMP)", "🟢 Demo (simulado)"], index=0)
-    intentos = st.slider("Intentos por host", 1, 5, PING_ATTEMPTS)
-    timeout = st.slider("Timeout (ms)", 200, 3000, PING_TIMEOUT_MS, step=100)
-    scan_enabled = st.checkbox("🔍 Escanear Puertos TCP", value=False)
+    st.markdown('<div class="hud-title">⚙ CONFIGURACIÓN DEL SISTEMA</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="hud-title" style="margin-top:20px;">📦 SYSTEM MODULES</div>', unsafe_allow_html=True)
-    st.markdown("""
-    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; border-left: 2px solid #00ff41;">
-        <div class="hud-module-item"><div class="led-green"></div> validators.py</div>
-        <div class="hud-module-item"><div class="led-green"></div> network_engine.py</div>
-        <div class="hud-module-item"><div class="led-green"></div> latency_analyzer.py</div>
-        <div class="hud-module-item"><div class="led-green"></div> results_manager.py</div>
-        <div class="hud-module-item"><div class="led-green"></div> exporter.py</div>
-        <div class="hud-module-item"><div class="led-green"></div> port_scanner.py</div>
-        <div class="hud-module-item"><div class="led-green"></div> topology.py</div>
-        <div class="hud-module-item"><div class="led-green"></div> packet_tracer_export.py</div>
-        <div class="hud-module-item"><div class="led-blue"></div> device_manager.py</div>
-        <div class="hud-module-item"><div class="led-blue"></div> monitor.py</div>
-    </div>
-    """, unsafe_allow_html=True)
+    mode = st.radio(
+        "Modo de ejecución",
+        ["🔴 Real (ICMP)", "🟢 Demo (simulado)"],
+        index=0,
+        help="Real envía pings ICMP reales. Demo usa datos simulados para probar la interfaz sin afectar redes reales.",
+    )
+    intentos = st.slider(
+        "Intentos por host", 1, 5, PING_ATTEMPTS,
+        help="Número de paquetes ICMP enviados a cada host. Más intentos = resultados más estables, pero mayor espera.",
+    )
+    timeout = st.slider(
+        "Tiempo de espera (ms)", 200, 3000, PING_TIMEOUT_MS, step=100,
+        help="Tiempo máximo de espera por respuesta. Si el host no responde, se marca como no disponible.",
+    )
+    scan_enabled = st.checkbox(
+        "🔍 Escanear puertos TCP", value=False,
+        disabled=mode.startswith("🟢"),
+        help="Activa el escaneo de puertos comunes (80, 443, 22, etc.) en cada host que responda. No disponible en modo demo.",
+    )
+    st.markdown('<div class="hud-title" style="margin-top:20px;">📦 MÓDULOS DEL SISTEMA</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="hud-title" style="margin-top:20px;">📡 SYSTEM STATUS</div>', unsafe_allow_html=True)
+    modules_html = '<div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; border-left: 2px solid #00ff41;">'
+    for name, desc, color in MODULES:
+        modules_html += (
+            f'<div class="hud-module-item">'
+            f'<div class="led-{color}"></div>'
+            f'<div class="hud-module-text">'
+            f'<span class="hud-module-name">{name}'
+            f'<span class="hud-info-icon" title="{desc}">ⓘ</span>'
+            f'</span>'
+            f'<span class="hud-module-desc">{desc}</span>'
+            f'</div>'
+            f'</div>'
+        )
+    modules_html += "</div>"
+    st.markdown(modules_html, unsafe_allow_html=True)
+
+    st.markdown('<div class="hud-title" style="margin-top:20px;">📡 ESTADO DEL SISTEMA</div>', unsafe_allow_html=True)
     st.markdown("""
-    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px; border-left: 2px solid #00bfff; font-size: 0.85em;">
+    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 5px;
+                border-left: 2px solid #00bfff; font-size: 0.85em;">
         <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
-            <span>Core Engine</span> <span style="color:#00ff41">ONLINE</span>
+            <span>Motor principal</span> <span style="color:#00ff41">EN LÍNEA</span>
         </div>
         <div style="display:flex; justify-content:space-between; margin-bottom:5px;">
-            <span>SSH Manager</span> <span style="color:#00bfff">READY</span>
+            <span>Gestor SSH</span> <span style="color:#00bfff">LISTO</span>
         </div>
         <div style="display:flex; justify-content:space-between;">
-            <span>Tests</span> <span style="color:#00ff41">31 PASSED</span>
+            <span>Pruebas</span> <span style="color:#00ff41">31 SUPERADAS</span>
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -537,25 +646,26 @@ tab_diag, tab_netdevops, tab_history = st.tabs([
 
 
 # ==========================================================
-# 7) TAB 1 — DIAGNÓSTICO
+# 7) PESTAÑA 1 — DIAGNÓSTICO
 # ==========================================================
 with tab_diag:
     col1, col2 = st.columns([2, 1])
     with col1:
-        st.markdown("### 📡 TARGET ACQUISITION")
+        st.markdown("### 📡 ADQUISICIÓN DE DATOS")
         default_ips = (
             "8.8.8.8, 1.1.1.1, google.com"
             if mode.startswith("🔴")
             else "192.168.1.1, 192.168.1.10, 192.168.1.25, 192.168.1.50, 192.168.1.99"
         )
         targets_input = st.text_area(
-            "Direcciones IPv4 o Dominios (soporta CIDR):",
+            "Direcciones IPv4 o dominios (soporta CIDR):",
             value=default_ips,
             height=100,
+            help="Separa por comas o saltos de línea. Acepta IPs, dominios y rangos CIDR (ej. 192.168.1.0/24).",
         )
 
     with col2:
-        st.markdown("### 🎯 ACTIONS")
+        st.markdown("### 🎯 ACCIONES")
         st.write("")
 
         if st.button("▶ EJECUTAR DIAGNÓSTICO", use_container_width=True):
@@ -567,9 +677,10 @@ with tab_diag:
             else:
                 raw_tokens = [t.strip() for t in re.split(r"[,\n]", targets_input) if t.strip()]
                 resolved_tokens = []
+                range_tokens = []
                 for t in raw_tokens:
                     if "/" in t or "-" in t:
-                        resolved_tokens.append(t)
+                        range_tokens.append(t)
                     else:
                         try:
                             resolved_tokens.append(resolve_dns(t))
@@ -577,27 +688,45 @@ with tab_diag:
                             resolved_tokens.append(t)
 
                 validas, errores = validate_list("\n".join(resolved_tokens))
-                for t in resolved_tokens:
-                    if "/" in t or "-" in t:
-                        try:
-                            validas.extend(expand_range(t))
-                        except Exception as e:
-                            st.error(f"Error en rango '{t}': {e}")
-
-                validas = list(set(validas))
                 for e in errores:
                     st.error(e)
 
+                for t in range_tokens:
+                    try:
+                        validas.extend(expand_range(t))
+                    except Exception as e:
+                        st.error(f"Error en rango '{t}': {e}")
+
+                validas = list(set(validas))
+
+                # Límite de seguridad para evitar escaneos masivos accidentales
+                MAX_HOSTS = 256
+                if len(validas) > MAX_HOSTS:
+                    st.error(
+                        f"⚠ Se han detectado **{len(validas)} hosts**, pero el límite es **{MAX_HOSTS}**. "
+                        f"Reduce el rango o divide el diagnóstico en varios lotes."
+                    )
+                    st.stop()
+
                 if validas:
                     with st.spinner("Ejecutando pings concurrentes..."):
-                        pings = ping_concurrente(validas, intentos=intentos, timeout_ms=timeout)
+                        try:
+                            pings = ping_concurrente(validas, intentos=intentos, timeout_ms=timeout)
+                            results = [build_result(p) for p in pings]
+                        except Exception as e:
+                            st.error(f"❌ Error durante el ping: {e}")
+                            st.stop()
                         results = [build_result(p) for p in pings]
 
                         if scan_enabled:
                             with st.spinner("Escaneando puertos TCP abiertos..."):
                                 for r in results:
                                     if r.estado == "disponible":
-                                        puertos = scan_ports(r.ip)
+                                        try:
+                                            puertos = scan_ports(r.ip)
+                                        except Exception as e:
+                                            r.observaciones += f" | Puertos: Error ({e})"
+                                            continue
                                         if puertos:
                                             r.observaciones += f" | Puertos: {', '.join(puertos)}"
                                         else:
@@ -608,9 +737,14 @@ with tab_diag:
                             "is_demo": False,
                             "summary": build_summary(results),
                         })
-                        save_to_history(results)
+                        try:
+                            save_to_history(results)
+                        except Exception as e:
+                            st.warning(f"No se pudo guardar el historial: {e}")
+                else:
+                    st.warning("No hay direcciones válidas para diagnosticar.")
 
-        if st.button("🌐 TRACEROUTE (Ruta)", use_container_width=True):
+        if st.button("🌐 TRAZADO DE RUTA (Traceroute)", use_container_width=True):
             if targets_input.strip():
                 target = targets_input.split(",")[0].strip()
                 try:
@@ -619,7 +753,12 @@ with tab_diag:
                     target_ip = None
                 if target_ip:
                     with st.spinner(f"Trazando ruta a {target_ip}..."):
-                        hops = tracert_host(target_ip)
+                        try:
+                            hops = tracert_host(target_ip)
+                            st.session_state["tracert_data"] = hops
+                            st.session_state["tracert_target"] = target_ip
+                        except Exception as e:
+                            st.error(f"❌ Error en traceroute: {e}")
                         st.session_state["tracert_data"] = hops
                         st.session_state["tracert_target"] = target_ip
                 else:
@@ -655,7 +794,7 @@ with tab_diag:
             "Latencia (ms)": r.latencia_promedio_ms if r.latencia_promedio_ms is not None else "—",
             "Clasificación": r.clasificacion,
             "Observaciones": r.observaciones,
-            "Timestamp": r.timestamp,
+            "Marca de tiempo": r.timestamp,
         } for r in results])
         st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -693,7 +832,7 @@ with tab_diag:
                     except Exception as e:
                         st.error(f"Error al generar .pkt: {e}")
 
-    # ---- Resultados del traceroute ----
+    # ---- Resultados del trazado de ruta ----
     if "tracert_data" in st.session_state:
         st.markdown(f"### 🛣 RUTA HACIA {st.session_state['tracert_target']}")
         saltos = st.session_state["tracert_data"]
@@ -702,7 +841,7 @@ with tab_diag:
         elif saltos:
             st.dataframe(saltos, use_container_width=True, hide_index=True)
         else:
-            st.info("El traceroute no devolvió saltos (host inalcanzable o ICMP bloqueado en la ruta).")
+            st.info("El trazado de ruta no devolvió saltos (host inalcanzable o ICMP bloqueado en la ruta).")
 
         st.markdown("### 🧠 LECTURA DE LA RUTA")
         with st.expander("¿Qué significa esta ruta?", expanded=True):
@@ -710,7 +849,7 @@ with tab_diag:
 
 
 # ==========================================================
-# 8) TAB 2 — NETDEVOPS
+# 8) PESTAÑA 2 — NETDEVOPS
 # ==========================================================
 with tab_netdevops:
     st.markdown("### 🖥 GESTIÓN DE DISPOSITIVOS (NETDEVOPS)")
@@ -721,7 +860,7 @@ with tab_netdevops:
     with col_ssh:
         with st.container(border=True):
             st.markdown("#### 🔐 SSH — Netmiko")
-            dev_ip = st.text_input("IP del Dispositivo", "192.168.1.1", key="ssh_ip")
+            dev_ip = st.text_input("IP del dispositivo", "192.168.1.1", key="ssh_ip")
             dev_user = st.text_input("Usuario", "admin", key="ssh_user")
             dev_pass = st.text_input("Contraseña", type="password", key="ssh_pass")
 
@@ -734,7 +873,7 @@ with tab_netdevops:
                     if res.get("status") == "success":
                         st.success("Conexión SSH establecida")
                         st.text_area("Show Version", res.get("version", ""), height=200)
-                        st.text_area("LLDP Neighbors", res.get("neighbors", ""), height=150)
+                        st.text_area("Vecinos LLDP", res.get("neighbors", ""), height=150)
                     else:
                         st.error(f"Fallo SSH: {res.get('message', 'desconocido')}")
                     st.markdown("### 🧠 LECTURA SSH")
@@ -743,7 +882,7 @@ with tab_netdevops:
     with col_snmp:
         with st.container(border=True):
             st.markdown("#### 📡 SNMP — PySNMP")
-            snmp_ip = st.text_input("IP del Dispositivo", "192.168.1.1", key="snmp_ip")
+            snmp_ip = st.text_input("IP del dispositivo", "192.168.1.1", key="snmp_ip")
             snmp_comm = st.text_input("Community String", "public", type="password", key="snmp_comm")
 
             if st.button("📶 Probar SNMP", use_container_width=True):
@@ -762,7 +901,7 @@ with tab_netdevops:
 
 
 # ==========================================================
-# 9) TAB 3 — HISTORIAL
+# 9) PESTAÑA 3 — HISTORIAL
 # ==========================================================
 with tab_history:
     st.markdown("### 📈 HISTORIAL DE LATENCIA")
