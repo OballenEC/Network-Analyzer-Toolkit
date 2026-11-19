@@ -1,5 +1,7 @@
 streamlit>=1.40
 pandas>=2.0
-pytest>=8.0
 pyvis>=0.3.2
 networkx>=3.2
+netmiko>=4.3
+pysnmp>=6.0
+pktlib>=0.2.2
