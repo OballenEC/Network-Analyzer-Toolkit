@@ -6,3 +6,4 @@ reports/*.csv
 .idea/
 .env
 .pytest_cache/
+reports/
