@@ -1,4 +1,4 @@
-# src/monitor.py
+﻿# src/monitor.py
 import json
 import os
 from datetime import datetime
@@ -36,7 +36,13 @@ def save_to_history(results: List[DiagnosticResult]):
     return len(history)
 
 def load_history():
-    if os.path.exists(HISTORY_FILE):
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    try:
         with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return []
+            contenido = f.read().strip()
+            if not contenido:
+                return []
+            return json.loads(contenido)
+    except (json.JSONDecodeError, IOError, OSError):
+        return []

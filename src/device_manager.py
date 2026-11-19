@@ -1,7 +1,6 @@
 # src/device_manager.py
 import time
 from netmiko import ConnectHandler
-from pysnmp.hlapi import *
 
 def get_device_info_ssh(ip: str, username: str, password: str, device_type: str = "cisco_ios"):
     """Obtiene el 'show version' y vecinos LLDP/CDP vía SSH."""
@@ -20,24 +19,37 @@ def get_device_info_ssh(ip: str, username: str, password: str, device_type: str 
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-def get_snmp_metrics(ip: str, community: str = "public"):
-    """Consulta el nombre del dispositivo (sysName) vía SNMP (Capa 4)."""
+def get_snmp_metrics(ip: str, community: str = 'public'):
+    """
+    Consulta SNMPv2c usando la API async de PySNMP 7.x.
+    Devuelve dict con sysName, sysUpTime, ifNumber o {'status': 'error', 'message': ...}.
+    """
+    async def _query():
+        try:
+            transport = await UdpTransportTarget.create((ip, 161), timeout=2, retries=1)
+            errorIndication, errorStatus, errorIndex, varBinds = await get_cmd(
+                SnmpEngine(),
+                CommunityData(community, mpModel=1),  # mpModel=1 → SNMPv2c
+                transport,
+                ContextData(),
+                ObjectType(ObjectIdentity('SNMPv2-MIB', 'sysName', 0)),
+                ObjectType(ObjectIdentity('SNMPv2-MIB', 'sysUpTime', 0)),
+                ObjectType(ObjectIdentity('IF-MIB', 'ifNumber', 0)),
+            )
+            if errorIndication:
+                return {'status': 'error', 'message': str(errorIndication)}
+            if errorStatus:
+                return {'status': 'error', 'message': errorStatus.prettyPrint()}
+            return {
+                'status': 'success',
+                'sysName': str(varBinds[0][1]),
+                'sysUpTime': str(varBinds[1][1]),
+                'ifNumber': str(varBinds[2][1]),
+            }
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
     try:
-        iterator = getCmd(
-            SnmpEngine(),
-            CommunityData(community),
-            UdpTransportTarget((ip, 161), timeout=2, retries=0),
-            ContextData(),
-            ObjectType(ObjectIdentity('SNMPv2-MIB', 'sysName', 0))
-        )
-        errorIndication, errorStatus, errorIndex, varBinds = next(iterator)
-        
-        if errorIndication:
-            return {"status": "error", "message": str(errorIndication)}
-        elif errorStatus:
-            return {"status": "error", "message": errorStatus.prettyPrint()}
-        else:
-            for varBind in varBinds:
-                return {"status": "success", "sysName": varBind[1].prettyPrint()}
+        return asyncio.run(_query())
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {'status': 'error', 'message': f'Error en SNMP: {e}'}
